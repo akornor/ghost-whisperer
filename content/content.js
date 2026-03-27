@@ -9,12 +9,29 @@
   window.__ghostwhisperer_loaded = true;
 
   let currentHighlightIndex = -1;
-
-  // --- Text Extraction ---
+  let chunkToRawIndex = [];
 
   const MAX_CHUNK_LENGTH = 4500; // ElevenLabs limit is ~5000 chars, leave margin
 
-  // Split text at sentence boundaries to stay under the API character limit
+  // Tags Readability produces as top-level content blocks
+  const EXTRACTION_TAGS = new Set([
+    "P", "H1", "H2", "H3", "H4", "H5", "H6",
+    "LI", "BLOCKQUOTE", "PRE", "TD", "TH",
+  ]);
+
+  // Broader set for finding matching elements in the original DOM
+  const HIGHLIGHT_CANDIDATE_TAGS = new Set([
+    "P", "H1", "H2", "H3", "H4", "H5", "H6",
+    "LI", "BLOCKQUOTE", "PRE", "TD", "TH",
+    "DIV", "SECTION", "ARTICLE",
+  ]);
+
+  const HIGHLIGHT_SELECTOR = Array.from(HIGHLIGHT_CANDIDATE_TAGS)
+    .join(",")
+    .toLowerCase();
+
+  // --- Text Extraction ---
+
   function splitLongText(text) {
     if (text.length <= MAX_CHUNK_LENGTH) return [text];
 
@@ -28,7 +45,7 @@
       if (splitAt === -1) {
         splitAt = MAX_CHUNK_LENGTH;
       } else {
-        splitAt += 1; // include the space/period
+        splitAt += 1;
       }
       chunks.push(remaining.slice(0, splitAt).trim());
       remaining = remaining.slice(splitAt).trim();
@@ -46,13 +63,8 @@
       return [];
     }
 
-    // Parse the cleaned HTML to get block-level elements
     const parser = new DOMParser();
     const parsed = parser.parseFromString(article.content, "text/html");
-    const blockTags = new Set([
-      "P", "H1", "H2", "H3", "H4", "H5", "H6",
-      "LI", "BLOCKQUOTE", "PRE", "TD", "TH",
-    ]);
 
     const rawParagraphs = [];
     const walker = document.createTreeWalker(
@@ -60,10 +72,9 @@
       NodeFilter.SHOW_ELEMENT,
       {
         acceptNode(node) {
-          if (blockTags.has(node.tagName)) {
-            return NodeFilter.FILTER_ACCEPT;
-          }
-          return NodeFilter.FILTER_SKIP;
+          return EXTRACTION_TAGS.has(node.tagName)
+            ? NodeFilter.FILTER_ACCEPT
+            : NodeFilter.FILTER_SKIP;
         },
       }
     );
@@ -76,10 +87,8 @@
       }
     }
 
-    // Tag the original DOM for highlighting
     tagOriginalDom(rawParagraphs);
 
-    // Split long paragraphs for TTS, track mapping for highlighting
     const paragraphs = [];
     chunkToRawIndex = [];
     for (let i = 0; i < rawParagraphs.length; i++) {
@@ -93,29 +102,18 @@
     return paragraphs;
   }
 
-  // Maps chunk index (used by the queue) to raw paragraph index (used for highlighting)
-  let chunkToRawIndex = [];
-
   function tagOriginalDom(paragraphs) {
-    // Remove any previous tags
     document.querySelectorAll("[data-gw-index]").forEach((el) => {
       el.removeAttribute("data-gw-index");
       el.classList.remove("ghostwhisperer-active");
     });
 
-    const blockTags = new Set([
-      "P", "H1", "H2", "H3", "H4", "H5", "H6",
-      "LI", "BLOCKQUOTE", "PRE", "TD", "TH",
-      "DIV", "SECTION", "ARTICLE",
-    ]);
-
-    const candidates = document.querySelectorAll(
-      Array.from(blockTags).join(",").toLowerCase()
-    );
+    const candidates = document.querySelectorAll(HIGHLIGHT_SELECTOR);
 
     const used = new Set();
     for (let i = 0; i < paragraphs.length; i++) {
       const target = paragraphs[i];
+      const normalizedTarget = target.replace(/\s+/g, " ");
       let bestMatch = null;
       let bestScore = 0;
 
@@ -131,7 +129,6 @@
         }
 
         const normalizedEl = elText.replace(/\s+/g, " ");
-        const normalizedTarget = target.replace(/\s+/g, " ");
 
         if (normalizedEl === normalizedTarget) {
           bestMatch = el;
@@ -159,11 +156,7 @@
 
   function highlightParagraph(chunkIndex) {
     clearHighlight();
-    // Map chunk index to raw paragraph index
-    const rawIndex =
-      chunkToRawIndex[chunkIndex] !== undefined
-        ? chunkToRawIndex[chunkIndex]
-        : chunkIndex;
+    const rawIndex = chunkToRawIndex[chunkIndex] ?? chunkIndex;
     const el = document.querySelector(`[data-gw-index="${rawIndex}"]`);
     if (el) {
       el.classList.add("ghostwhisperer-active");

@@ -18,14 +18,17 @@ function ensureAudioElement() {
   return audioElement;
 }
 
+function revokeCurrentBlob() {
+  if (audioElement && audioElement.src && audioElement.src.startsWith("blob:")) {
+    URL.revokeObjectURL(audioElement.src);
+  }
+}
+
 chrome.runtime.onMessage.addListener((message) => {
   switch (message.type) {
     case "offscreen-play": {
       const audio = ensureAudioElement();
-
-      if (audio.src && audio.src.startsWith("blob:")) {
-        URL.revokeObjectURL(audio.src);
-      }
+      revokeCurrentBlob();
 
       const binary = atob(message.audioBase64);
       const bytes = new Uint8Array(binary.length);
@@ -53,9 +56,7 @@ chrome.runtime.onMessage.addListener((message) => {
     case "offscreen-stop":
       if (audioElement) {
         audioElement.pause();
-        if (audioElement.src && audioElement.src.startsWith("blob:")) {
-          URL.revokeObjectURL(audioElement.src);
-        }
+        revokeCurrentBlob();
         audioElement.src = "";
       }
       break;

@@ -7,6 +7,9 @@ const AudioCache = (() => {
   const DB_VERSION = 1;
   const STORE_NAME = "entries";
   const MAX_ENTRIES = 200;
+  const LRU_TOUCH_THRESHOLD_MS = 5 * 60 * 1000; // only bump timestamp if older than 5 min
+
+  let dbPromise = null;
 
   // FNV-1a hash — fast, good distribution, no async needed
   function fnv1a(str) {
@@ -19,28 +22,32 @@ const AudioCache = (() => {
   }
 
   function cacheKey(text, voiceId) {
-    return fnv1a(text + "|" + voiceId);
+    // Use null separator to avoid collisions when text contains the delimiter
+    return fnv1a(text + "\x00" + voiceId);
   }
 
-  function openDB() {
-    return new Promise((resolve, reject) => {
-      const request = indexedDB.open(DB_NAME, DB_VERSION);
+  function getDB() {
+    if (!dbPromise) {
+      dbPromise = new Promise((resolve, reject) => {
+        const request = indexedDB.open(DB_NAME, DB_VERSION);
 
-      request.onupgradeneeded = (event) => {
-        const db = event.target.result;
-        if (!db.objectStoreNames.contains(STORE_NAME)) {
-          const store = db.createObjectStore(STORE_NAME, { keyPath: "key" });
-          store.createIndex("timestamp", "timestamp", { unique: false });
-        }
-      };
+        request.onupgradeneeded = (event) => {
+          const db = event.target.result;
+          if (!db.objectStoreNames.contains(STORE_NAME)) {
+            const store = db.createObjectStore(STORE_NAME, { keyPath: "key" });
+            store.createIndex("timestamp", "timestamp", { unique: false });
+          }
+        };
 
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = () => reject(request.error);
-    });
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+    }
+    return dbPromise;
   }
 
   async function get(text, voiceId) {
-    const db = await openDB();
+    const db = await getDB();
     return new Promise((resolve, reject) => {
       const tx = db.transaction(STORE_NAME, "readonly");
       const store = tx.objectStore(STORE_NAME);
@@ -49,11 +56,13 @@ const AudioCache = (() => {
       request.onsuccess = () => {
         const result = request.result;
         if (result) {
-          // Update timestamp on access (LRU touch) in a separate transaction
-          const writeTx = db.transaction(STORE_NAME, "readwrite");
-          const writeStore = writeTx.objectStore(STORE_NAME);
-          result.timestamp = Date.now();
-          writeStore.put(result);
+          // Lazy LRU: only bump timestamp if stale, to avoid expensive writes on rapid sequential hits
+          if (Date.now() - result.timestamp > LRU_TOUCH_THRESHOLD_MS) {
+            const writeTx = db.transaction(STORE_NAME, "readwrite");
+            const writeStore = writeTx.objectStore(STORE_NAME);
+            result.timestamp = Date.now();
+            writeStore.put(result);
+          }
           resolve(result.audio);
         } else {
           resolve(null);
@@ -64,10 +73,9 @@ const AudioCache = (() => {
   }
 
   async function put(text, voiceId, audio) {
-    const db = await openDB();
+    const db = await getDB();
     const key = cacheKey(text, voiceId);
 
-    // Store the entry
     await new Promise((resolve, reject) => {
       const tx = db.transaction(STORE_NAME, "readwrite");
       const store = tx.objectStore(STORE_NAME);
@@ -76,7 +84,6 @@ const AudioCache = (() => {
       tx.onerror = () => reject(tx.error);
     });
 
-    // Evict oldest if over limit
     await evict(db);
   }
 
@@ -116,7 +123,7 @@ const AudioCache = (() => {
   }
 
   async function clear() {
-    const db = await openDB();
+    const db = await getDB();
     return new Promise((resolve, reject) => {
       const tx = db.transaction(STORE_NAME, "readwrite");
       const store = tx.objectStore(STORE_NAME);
@@ -127,7 +134,7 @@ const AudioCache = (() => {
   }
 
   async function getStats() {
-    const db = await openDB();
+    const db = await getDB();
     return new Promise((resolve, reject) => {
       const tx = db.transaction(STORE_NAME, "readonly");
       const store = tx.objectStore(STORE_NAME);

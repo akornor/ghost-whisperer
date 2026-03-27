@@ -17,20 +17,27 @@ let currentIndex = 0;
 let prefetchedAudio = null; // { index, base64 }
 let activeTabId = null;
 let selectedVoiceId = null;
-let offscreenCreated = false;
+let cachedApiKey = null;
 
 // --- State Persistence ---
 // MV3 service workers can be terminated at any time. We persist critical
-// reading state to chrome.storage.session (survives restarts, cleared on
-// browser close) so "paragraph-done" messages can resume playback.
+// reading state to chrome.storage.session so "paragraph-done" messages
+// can resume playback after a restart.
 
-async function saveState() {
+async function saveFullState() {
   await chrome.storage.session.set({
     gwState: state,
     gwParagraphs: paragraphs,
     gwCurrentIndex: currentIndex,
     gwActiveTabId: activeTabId,
     gwSelectedVoiceId: selectedVoiceId,
+  });
+}
+
+async function saveProgress() {
+  await chrome.storage.session.set({
+    gwState: state,
+    gwCurrentIndex: currentIndex,
   });
 }
 
@@ -61,57 +68,45 @@ async function clearPersistedState() {
   ]);
 }
 
-// Restore on startup (service worker wake)
 restoreState();
 
 // --- Offscreen Document ---
 
 async function ensureOffscreen() {
-  if (offscreenCreated) return;
-
   const existingContexts = await chrome.runtime.getContexts({
     contextTypes: ["OFFSCREEN_DOCUMENT"],
   });
-  if (existingContexts.length > 0) {
-    offscreenCreated = true;
-    return;
-  }
+  if (existingContexts.length > 0) return;
 
   await chrome.offscreen.createDocument({
     url: "offscreen/offscreen.html",
     reasons: ["AUDIO_PLAYBACK"],
     justification: "Playing ElevenLabs TTS audio for article reading",
   });
-  offscreenCreated = true;
 }
 
 // --- Helpers ---
 
-async function getApiKey() {
-  return new Promise((resolve) => {
-    chrome.storage.local.get("apiKey", (data) => resolve(data.apiKey || null));
-  });
+function broadcastError(msg) {
+  chrome.runtime.sendMessage({ type: "error", message: msg }).catch(() => {});
 }
 
-async function getSelectedVoice() {
-  return new Promise((resolve) => {
-    chrome.storage.local.get("voiceId", (data) =>
-      resolve(data.voiceId || null)
-    );
-  });
+async function getConfig() {
+  const data = await chrome.storage.local.get(["apiKey", "voiceId"]);
+  return { apiKey: data.apiKey || null, voiceId: data.voiceId || null };
 }
 
 function arrayBufferToBase64(buffer) {
-  let binary = "";
   const bytes = new Uint8Array(buffer);
-  for (let i = 0; i < bytes.byteLength; i++) {
-    binary += String.fromCharCode(bytes[i]);
+  const CHUNK = 0x8000;
+  const parts = [];
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    parts.push(String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK)));
   }
-  return btoa(binary);
+  return btoa(parts.join(""));
 }
 
 async function fetchTTS(text, apiKey, voiceId) {
-  // Check cache first
   const cached = await AudioCache.get(text, voiceId);
   if (cached) return cached;
 
@@ -142,7 +137,6 @@ async function fetchTTS(text, apiKey, voiceId) {
   const buffer = await resp.arrayBuffer();
   const base64 = arrayBufferToBase64(buffer);
 
-  // Cache the response
   AudioCache.put(text, voiceId, base64).catch(() => {});
 
   return base64;
@@ -198,56 +192,35 @@ async function prefetchNext(apiKey, voiceId) {
 
 async function startReading(tabId) {
   activeTabId = tabId;
-  const apiKey = await getApiKey();
-  if (!apiKey) {
-    chrome.runtime.sendMessage({
-      type: "error",
-      message: "No API key set. Open settings to add your ElevenLabs key.",
-    }).catch(() => {});
+
+  const [config] = await Promise.all([getConfig(), ensureOffscreen()]);
+
+  if (!config.apiKey) {
+    broadcastError("No API key set. Open settings to add your ElevenLabs key.");
+    return;
+  }
+  if (!config.voiceId) {
+    broadcastError("No voice selected. Choose a voice from the popup.");
     return;
   }
 
-  const voiceId = await getSelectedVoice();
-  if (!voiceId) {
-    chrome.runtime.sendMessage({
-      type: "error",
-      message: "No voice selected. Choose a voice from the popup.",
-    }).catch(() => {});
-    return;
-  }
-  selectedVoiceId = voiceId;
+  cachedApiKey = config.apiKey;
+  selectedVoiceId = config.voiceId;
 
-  try {
-    await ensureOffscreen();
-  } catch (err) {
-    chrome.runtime.sendMessage({
-      type: "error",
-      message: `Failed to create audio context: ${err.message}`,
-    }).catch(() => {});
-    return;
-  }
-
-  // Ask content script to extract text
   try {
     const response = await sendToTab(tabId, { type: "extract-text" });
     if (!response || !response.paragraphs || response.paragraphs.length === 0) {
-      chrome.runtime.sendMessage({
-        type: "error",
-        message: "Could not extract any readable text from this page.",
-      }).catch(() => {});
+      broadcastError("Could not extract any readable text from this page.");
       return;
     }
     paragraphs = response.paragraphs;
     currentIndex = 0;
     state = State.READING;
-    await saveState();
+    await saveFullState();
     broadcastState();
-    await playCurrentParagraph(apiKey, voiceId);
+    await playCurrentParagraph(cachedApiKey, selectedVoiceId);
   } catch (err) {
-    chrome.runtime.sendMessage({
-      type: "error",
-      message: `Extraction failed: ${err.message}`,
-    }).catch(() => {});
+    broadcastError(`Extraction failed: ${err.message}`);
   }
 }
 
@@ -267,30 +240,22 @@ async function playCurrentParagraph(apiKey, voiceId) {
     try {
       base64 = await fetchTTS(paragraphs[currentIndex], apiKey, voiceId);
     } catch (err) {
-      chrome.runtime.sendMessage({
-        type: "error",
-        message: `TTS failed: ${err.message}`,
-      }).catch(() => {});
+      broadcastError(`TTS failed: ${err.message}`);
       await stopReading();
       return;
     }
   }
 
-  await ensureOffscreen();
-
-  // Send audio to offscreen document for playback
   chrome.runtime.sendMessage({
     type: "offscreen-play",
     audioBase64: base64,
   }).catch(() => {});
 
-  // Tell content script to highlight the current paragraph
   sendToTab(activeTabId, {
     type: "highlight",
     paragraphIndex: currentIndex,
   }).catch(() => {});
 
-  // Start prefetching next paragraph
   prefetchNext(apiKey, voiceId);
 }
 
@@ -307,28 +272,48 @@ async function stopReading() {
   }
 }
 
+function advanceToNext() {
+  currentIndex++;
+  if (currentIndex >= paragraphs.length) {
+    stopReading();
+  } else {
+    const apiKey = cachedApiKey;
+    const voiceId = selectedVoiceId;
+    saveProgress().then(() => {
+      if (!apiKey) {
+        getConfig().then((config) => {
+          cachedApiKey = config.apiKey;
+          playCurrentParagraph(cachedApiKey, voiceId);
+        });
+      } else {
+        playCurrentParagraph(apiKey, voiceId);
+      }
+    });
+  }
+}
+
 // --- Message handling ---
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   switch (message.type) {
-    case "start":
-      if (state !== State.IDLE) {
-        stopReading().then(() => {
-          chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-            if (tabs[0]) startReading(tabs[0].id);
-          });
-        });
-      } else {
+    case "start": {
+      const doStart = () => {
         chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
           if (tabs[0]) startReading(tabs[0].id);
         });
+      };
+      if (state !== State.IDLE) {
+        stopReading().then(doStart);
+      } else {
+        doStart();
       }
       return false;
+    }
 
     case "pause":
       if (state === State.READING) {
         state = State.PAUSED;
-        saveState();
+        saveProgress();
         broadcastState();
         chrome.runtime.sendMessage({ type: "offscreen-pause" }).catch(() => {});
       }
@@ -337,7 +322,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     case "resume":
       if (state === State.PAUSED) {
         state = State.READING;
-        saveState();
+        saveProgress();
         broadcastState();
         chrome.runtime.sendMessage({ type: "offscreen-resume" }).catch(() => {});
       }
@@ -345,19 +330,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     case "next":
       if (state === State.READING || state === State.PAUSED) {
-        // Stop current audio, advance to next paragraph
         chrome.runtime.sendMessage({ type: "offscreen-stop" }).catch(() => {});
         state = State.READING;
-        currentIndex++;
-        if (currentIndex >= paragraphs.length) {
-          stopReading();
-        } else {
-          saveState().then(() =>
-            getApiKey().then((apiKey) => {
-              playCurrentParagraph(apiKey, selectedVoiceId);
-            })
-          );
-        }
+        advanceToNext();
       }
       return false;
 
@@ -367,16 +342,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     case "paragraph-done":
       if (state === State.READING) {
-        currentIndex++;
-        if (currentIndex >= paragraphs.length) {
-          stopReading();
-        } else {
-          saveState().then(() =>
-            getApiKey().then((apiKey) => {
-              playCurrentParagraph(apiKey, selectedVoiceId);
-            })
-          );
-        }
+        advanceToNext();
       }
       return false;
 
@@ -389,19 +355,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return false;
 
     case "get-voices":
-      getApiKey().then(async (apiKey) => {
-        if (!apiKey) {
+      getConfig().then(async (config) => {
+        if (!config.apiKey) {
           sendResponse({ error: "No API key set." });
           return;
         }
         try {
-          const voices = await fetchVoices(apiKey);
+          const voices = await fetchVoices(config.apiKey);
           sendResponse({ voices });
         } catch (err) {
           sendResponse({ error: err.message });
         }
       });
-      return true; // async sendResponse
+      return true;
 
     case "set-voice":
       chrome.storage.local.set({ voiceId: message.voiceId });
@@ -421,7 +387,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       }).catch(() => {
         sendResponse({ count: 0, estimatedSizeMB: 0 });
       });
-      return true; // async sendResponse
+      return true;
 
     case "clear-cache":
       AudioCache.clear().then(() => {
@@ -429,6 +395,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       }).catch(() => {
         sendResponse({ ok: false });
       });
-      return true; // async sendResponse
+      return true;
   }
 });
