@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <style>
+    :root {
+      --bg: #F8F8F7;
+      --surface: #FFFFFF;
+      --border: #E8E5E1;
+      --border-subtle: #F0EEEB;
+      --text-primary: #1A1918;
+      --text-secondary: #6B6560;
+      --text-tertiary: #9C9691;
+      --accent: #2C2C2C;
+      --accent-hover: #404040;
+      --accent-surface: #F2F0ED;
+      --accent-surface-hover: #EAE7E3;
+      --danger: #B44632;
+      --reading-pulse: #3D8C6E;
+      --reading-bg: rgba(61, 140, 110, 0.06);
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      width: 320px;
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text-primary);
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+
+    /* --- Header --- */
+    .header {
+      padding: 20px 20px 0;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .header-left {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .logo {
+      width: 28px;
+      height: 28px;
+      border-radius: 7px;
+      overflow: hidden;
+    }
+    .logo img {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+    .header h1 {
+      font-size: 14px;
+      font-weight: 600;
+      letter-spacing: -0.2px;
+      color: var(--text-primary);
+    }
+    .settings-btn {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 28px;
+      height: 28px;
+      border-radius: 6px;
+      border: none;
+      background: transparent;
+      color: var(--text-tertiary);
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    .settings-btn:hover {
+      background: var(--accent-surface);
+      color: var(--text-secondary);
+    }
+    .settings-btn svg {
+      width: 16px;
+      height: 16px;
+      pointer-events: none;
+    }
+
+    /* --- Status --- */
+    .status-section {
+      padding: 16px 20px 0;
+    }
+    .status-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 20px;
+    }
+    .status-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--text-tertiary);
+      flex-shrink: 0;
+      transition: background 0.3s ease;
+    }
+    .status-dot.reading {
+      background: var(--reading-pulse);
+      animation: pulse 1.8s ease-in-out infinite;
+    }
+    .status-dot.paused {
+      background: #C4973B;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.5; transform: scale(0.85); }
+    }
+    .status-text {
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text-secondary);
+      letter-spacing: -0.1px;
+    }
+
+    /* --- Progress --- */
+    .progress-track {
+      margin: 12px 20px 0;
+      height: 2px;
+      background: var(--border);
+      border-radius: 1px;
+      overflow: hidden;
+    }
+    .progress-fill {
+      height: 100%;
+      width: 0%;
+      background: var(--text-tertiary);
+      border-radius: 1px;
+      transition: width 0.4s ease;
+    }
+    .progress-fill.active {
+      background: var(--reading-pulse);
+    }
+
+    /* --- Error --- */
+    .error-banner {
+      margin: 12px 20px 0;
+      padding: 10px 12px;
+      background: #FEF2F0;
+      border: 1px solid #F5D5CF;
+      border-radius: 8px;
+      font-size: 12px;
+      font-weight: 450;
+      color: var(--danger);
+      line-height: 1.4;
+      display: none;
+    }
+
+    /* --- Transport Controls --- */
+    .transport {
+      padding: 16px 20px 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
+    }
+    .transport-btn {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 40px;
+      height: 40px;
+      border: none;
+      border-radius: 10px;
+      background: transparent;
+      color: var(--text-primary);
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    .transport-btn:hover:not(:disabled) {
+      background: var(--accent-surface);
+    }
+    .transport-btn:active:not(:disabled) {
+      background: var(--accent-surface-hover);
+      transform: scale(0.95);
+    }
+    .transport-btn:disabled {
+      color: var(--border);
+      cursor: default;
+    }
+    .transport-btn svg {
+      width: 18px;
+      height: 18px;
+      pointer-events: none;
+    }
+    .transport-btn.play-main {
+      width: 48px;
+      height: 48px;
+      background: var(--accent);
+      color: white;
+      border-radius: 14px;
+      margin: 0 4px;
+    }
+    .transport-btn.play-main:hover:not(:disabled) {
+      background: var(--accent-hover);
+    }
+    .transport-btn.play-main:active:not(:disabled) {
+      transform: scale(0.95);
+    }
+    .transport-btn.play-main:disabled {
+      background: var(--border);
+      color: white;
+    }
+    .transport-btn.play-main svg {
+      width: 20px;
+      height: 20px;
+    }
+    .transport-btn.stop-btn:hover:not(:disabled) {
+      color: var(--danger);
+    }
+
+    /* --- Divider --- */
+    .divider {
+      margin: 16px 20px 0;
+      height: 1px;
+      background: var(--border-subtle);
+    }
+
+    /* --- Settings Rows --- */
+    .settings-group {
+      padding: 12px 20px 20px;
+    }
+    .setting-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 0;
+    }
+    .setting-row + .setting-row {
+      border-top: 1px solid var(--border-subtle);
+    }
+    .setting-label {
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text-secondary);
+      letter-spacing: -0.1px;
+      flex-shrink: 0;
+    }
+    .setting-control {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+    }
+
+    /* Voice Select */
+    .voice-select {
+      appearance: none;
+      -webkit-appearance: none;
+      padding: 5px 26px 5px 10px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--surface);
+      font-size: 12px;
+      font-weight: 450;
+      font-family: inherit;
+      color: var(--text-primary);
+      cursor: pointer;
+      outline: none;
+      max-width: 160px;
+      text-overflow: ellipsis;
+      transition: border-color 0.15s ease;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%239C9691' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 8px center;
+    }
+    .voice-select:hover { border-color: var(--text-tertiary); }
+    .voice-select:focus { border-color: var(--text-secondary); }
+
+    /* Speed Control */
+    .speed-control {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .speed-slider {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 100px;
+      height: 3px;
+      background: var(--border);
+      border-radius: 2px;
+      outline: none;
+      cursor: pointer;
+    }
+    .speed-slider::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      background: var(--accent);
+      border: none;
+      cursor: pointer;
+      transition: transform 0.1s ease;
+    }
+    .speed-slider::-webkit-slider-thumb:hover {
+      transform: scale(1.15);
+    }
+    .speed-slider::-webkit-slider-thumb:active {
+      transform: scale(1.05);
+    }
+    .speed-value {
+      font-size: 11px;
+      font-weight: 600;
+      font-variant-numeric: tabular-nums;
+      color: var(--text-tertiary);
+      min-width: 28px;
+      text-align: right;
+      letter-spacing: -0.2px;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Header -->
+  <div class="header">
+    <div class="header-left">
+      <div class="logo"><img src="../icons/icon48.png" alt=""></div>
+      <h1>GhostWhisperer</h1>
+    </div>
+    <button class="settings-btn" id="settingsLink" title="Settings">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="3"/>
+        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+      </svg>
+    </button>
+  </div>
+
+  <!-- Status -->
+  <div class="status-section">
+    <div class="status-row">
+      <div class="status-dot" id="statusDot"></div>
+      <span class="status-text" id="statusBar">Ready to read</span>
+    </div>
+  </div>
+
+  <!-- Progress -->
+  <div class="progress-track">
+    <div class="progress-fill" id="progressFill"></div>
+  </div>
+
+  <!-- Error -->
+  <div class="error-banner" id="error"></div>
+
+  <!-- Transport Controls -->
+  <div class="transport">
+    <!-- Stop -->
+    <button class="transport-btn stop-btn" id="stopBtn" disabled title="Stop">
+      <svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="1.5"/></svg>
+    </button>
+
+    <!-- Play / Pause (main) -->
+    <button class="transport-btn play-main" id="playBtn" title="Play">
+      <svg id="playIcon" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.14v13.72a1 1 0 0 0 1.5.86l11.14-6.86a1 1 0 0 0 0-1.72L9.5 4.28a1 1 0 0 0-1.5.86z"/></svg>
+      <svg id="pauseIcon" viewBox="0 0 24 24" fill="currentColor" style="display:none"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg>
+    </button>
+
+    <!-- Next -->
+    <button class="transport-btn" id="nextBtn" disabled title="Next paragraph">
+      <svg viewBox="0 0 24 24" fill="currentColor"><path d="M5 4.28v15.44a1 1 0 0 0 1.5.86l9.14-5.63V20a1 1 0 0 0 2 0V4a1 1 0 0 0-2 0v4.97L6.5 3.42A1 1 0 0 0 5 4.28z"/></svg>
+    </button>
+  </div>
+
+  <!-- Divider -->
+  <div class="divider"></div>
+
+  <!-- Settings -->
+  <div class="settings-group">
+    <div class="setting-row">
+      <span class="setting-label">Voice</span>
+      <div class="setting-control">
+        <select class="voice-select" id="voiceSelect">
+          <option value="">Loading...</option>
+        </select>
+      </div>
+    </div>
+    <div class="setting-row">
+      <span class="setting-label">Speed</span>
+      <div class="setting-control">
+        <div class="speed-control">
+          <input type="range" class="speed-slider" id="speedSlider" min="0.5" max="2" step="0.1" value="1">
+          <span class="speed-value" id="speedLabel">1.0x</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
