@@ -1,0 +1,36 @@
+{
+  "manifest_version": 3,
+  "name": "GhostWhisperer",
+  "version": "1.0.0",
+  "description": "Read any article aloud with ElevenLabs TTS",
+  "permissions": ["activeTab", "storage", "offscreen"],
+  "host_permissions": ["https://api.elevenlabs.io/*"],
+  "background": {
+    "service_worker": "background/service-worker.js"
+  },
+  "action": {
+    "default_popup": "popup/popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content/Readability.js", "content/content.js"],
+      "css": ["styles/highlight.css"],
+      "run_at": "document_idle"
+    }
+  ],
+  "options_ui": {
+    "page": "options/options.html",
+    "open_in_tab": true
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}
