@@ -13,12 +13,15 @@ const errorDiv = document.getElementById("error");
 const settingsLink = document.getElementById("settingsLink");
 
 let currentState = "idle";
+let errorTimeout = null;
 
 // --- UI Updates ---
 
 function updateUI(state, currentIndex, totalParagraphs) {
   currentState = state;
-  errorDiv.style.display = "none";
+  if (!errorTimeout) {
+    errorDiv.style.display = "none";
+  }
 
   // Progress bar
   const progress = totalParagraphs > 0
@@ -70,6 +73,11 @@ function updateUI(state, currentIndex, totalParagraphs) {
 function showError(msg) {
   errorDiv.textContent = msg;
   errorDiv.style.display = "block";
+  clearTimeout(errorTimeout);
+  errorTimeout = setTimeout(() => {
+    errorDiv.style.display = "none";
+    errorTimeout = null;
+  }, 8000);
 }
 
 // --- Init ---

@@ -91,6 +91,53 @@ function broadcastError(msg) {
   chrome.runtime.sendMessage({ type: "error", message: msg }).catch(() => {});
 }
 
+// Map ElevenLabs API errors to user-friendly messages
+function parseElevenLabsError(status, body) {
+  // body shape varies: { detail: { message, status } }, { detail: "string" }, { message: "string" }
+  const detail = body?.detail;
+  const raw =
+    (typeof detail === "string" ? detail : detail?.message) ||
+    body?.message ||
+    "";
+
+  switch (status) {
+    case 401:
+      return "Invalid API key. Check your key in Settings.";
+    case 403:
+      return "Access denied. Your API key may lack permissions for this voice or model.";
+    case 429:
+      if (/quota/i.test(raw) || /credit/i.test(raw) || /limit/i.test(raw)) {
+        return "You've run out of ElevenLabs credits. Upgrade your plan or wait for your quota to reset.";
+      }
+      return "Rate limited by ElevenLabs. Wait a moment and try again.";
+    case 400:
+      if (/too long/i.test(raw) || /character/i.test(raw)) {
+        return "Text too long for the API. This paragraph exceeded the character limit.";
+      }
+      return raw || "Bad request sent to ElevenLabs.";
+    case 404:
+      return "Voice not found. It may have been deleted — select a different voice.";
+    case 500:
+    case 502:
+    case 503:
+    case 504:
+      return "ElevenLabs is temporarily unavailable. Try again in a few seconds.";
+    default:
+      return raw || `ElevenLabs API error (HTTP ${status}).`;
+  }
+}
+
+function parseNetworkError(err) {
+  const msg = err.message || "";
+  if (msg.includes("Failed to fetch") || msg.includes("NetworkError")) {
+    return "Network error — check your internet connection.";
+  }
+  if (msg.includes("AbortError")) {
+    return "Request was cancelled.";
+  }
+  return msg || "An unexpected error occurred.";
+}
+
 async function getConfig() {
   const data = await chrome.storage.local.get(["apiKey", "voiceId"]);
   return { apiKey: data.apiKey || null, voiceId: data.voiceId || null };
@@ -110,28 +157,33 @@ async function fetchTTS(text, apiKey, voiceId) {
   const cached = await AudioCache.get(text, voiceId);
   if (cached) return cached;
 
-  const url = `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`;
-  const resp = await fetch(url, {
-    method: "POST",
-    headers: {
-      "xi-api-key": apiKey,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      text,
-      model_id: "eleven_turbo_v2_5",
-      voice_settings: {
-        stability: 0.5,
-        similarity_boost: 0.75,
-      },
-    }),
-  });
+  let resp;
+  try {
+    resp = await fetch(
+      `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`,
+      {
+        method: "POST",
+        headers: {
+          "xi-api-key": apiKey,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          text,
+          model_id: "eleven_turbo_v2_5",
+          voice_settings: {
+            stability: 0.5,
+            similarity_boost: 0.75,
+          },
+        }),
+      }
+    );
+  } catch (err) {
+    throw new Error(parseNetworkError(err));
+  }
 
   if (!resp.ok) {
     const body = await resp.json().catch(() => ({}));
-    throw new Error(
-      body.detail?.message || `ElevenLabs API error: ${resp.status}`
-    );
+    throw new Error(parseElevenLabsError(resp.status, body));
   }
 
   const buffer = await resp.arrayBuffer();
@@ -143,12 +195,20 @@ async function fetchTTS(text, apiKey, voiceId) {
 }
 
 async function fetchVoices(apiKey) {
-  const resp = await fetch("https://api.elevenlabs.io/v1/voices", {
-    headers: { "xi-api-key": apiKey },
-  });
-  if (!resp.ok) {
-    throw new Error(`Failed to fetch voices: ${resp.status}`);
+  let resp;
+  try {
+    resp = await fetch("https://api.elevenlabs.io/v1/voices", {
+      headers: { "xi-api-key": apiKey },
+    });
+  } catch (err) {
+    throw new Error(parseNetworkError(err));
   }
+
+  if (!resp.ok) {
+    const body = await resp.json().catch(() => ({}));
+    throw new Error(parseElevenLabsError(resp.status, body));
+  }
+
   const data = await resp.json();
   return data.voices.map((v) => ({ id: v.voice_id, name: v.name }));
 }

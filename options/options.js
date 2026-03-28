@@ -60,12 +60,25 @@ testBtn.addEventListener("click", async () => {
     });
     if (!resp.ok) {
       const body = await resp.json().catch(() => ({}));
-      throw new Error(body.detail?.message || `HTTP ${resp.status}`);
+      const detail = body?.detail;
+      const raw =
+        (typeof detail === "string" ? detail : detail?.message) ||
+        body?.message ||
+        "";
+      if (resp.status === 401) {
+        throw new Error("Invalid API key.");
+      }
+      throw new Error(raw || `HTTP ${resp.status}`);
     }
     const data = await resp.json();
     showStatus(`Connected \u2014 ${data.voices.length} voices available.`, "success");
   } catch (err) {
-    showStatus(`Connection failed: ${err.message}`, "error");
+    const msg = err.message || "";
+    if (msg.includes("Failed to fetch") || msg.includes("NetworkError")) {
+      showStatus("Network error \u2014 check your internet connection.", "error");
+    } else {
+      showStatus(err.message, "error");
+    }
   } finally {
     testBtn.disabled = false;
   }
